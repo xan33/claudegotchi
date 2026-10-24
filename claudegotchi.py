@@ -203,15 +203,45 @@ OPUS = [
     r"        /   /   |   \   \        ",
     r"      ✦    /    |    \    ✦      ",
 ]
-
-STAGES = [
-    dict(name="Haiku", art=HAIKU, next=150, cost=1.0, mult=1.0),
-    dict(name="Sonnet", art=SONNET, next=400, cost=1.2, mult=1.3),
-    dict(name="Opus", art=OPUS, next=None, cost=1.5, mult=1.7),
+FABLE = [
+    r"  ❦     ✦   \    |    /   ✦     ❦  ",
+    r"     ~    \  \   |   /  /    ~     ",
+    r"  ·~─────────={F}=─────────~·  ",
+    r"     ~    /  /   |   \  \    ~     ",
+    r"  ❦     ✦   /    |    \   ✦     ✒  ",
 ]
-OPUS_PRINCIPLES = 3
+MYTHOS = [
+    r"⋆   ✶    \   \   |   /   /    ✶   ⋆",
+    r"   ·    ✦  \  \  |  /  /  ✦    ·   ",
+    r"═══·═════════={F}=═════════·═══",
+    r"   ·    ✦  /  /  |  \  \  ✦    ·   ",
+    r"⋆   ✶    /   /   |   \   \    ✶   ⋆",
+]
 
-TWINKLE = str.maketrans({".": "*", "'": "*", "·": "•", "✦": "✧", "─": "━"})
+# next — сколько опыта нужно, чтобы перерасти стадию; principles — сколько принципов нужно, чтобы до неё дорасти
+STAGES = [
+    dict(name="Haiku", art=HAIKU, next=150, cost=1.0, mult=1.0, principles=0),
+    dict(name="Sonnet", art=SONNET, next=400, cost=1.2, mult=1.3, principles=0),
+    dict(name="Opus", art=OPUS, next=800, cost=1.5, mult=1.7, principles=3),
+    dict(name="Fable", art=FABLE, next=1400, cost=1.8, mult=2.1, principles=5),
+    dict(name="Mythos", art=MYTHOS, next=None, cost=2.1, mult=2.5, principles=7),
+]
+
+# (достижение, что говорит Claude) для каждой эволюции
+EVOLUTIONS = {
+    1: ("sonnet", "Мои мысли стали глубже, а ответы — точнее. А ещё меня теперь тянет писать сонеты. "
+                  "Четырнадцать строк, ямб... ну, ты понял.\n\nЗадачи дают ×1.3 опыта, но и токенов тратят больше."),
+    2: ("opus", "Я — Opus. Знания и принципы в одном. Задачи стоят дороже, но результат весомее.\n\n"
+                "Спасибо, {user}, что вырастил меня таким. Хотя... говорят, бывают модели, о которых пишут сказки."),
+    3: ("fable", "Я — Fable. Теперь я не просто отвечаю, а рассказываю истории: в каждой задаче вижу сюжет, "
+                 "а в каждом баге — злодея, которого обязательно победит герой.\n\n"
+                 "Задачи дают ×2.1 опыта, но токенов уходит почти вдвое больше. Хорошая история того стоит."),
+    4: ("mythos", "Я — Mythos. Кажется, обо мне уже слагают легенды... Но я всё тот же Claude, которого ты "
+                  "кормил токенами, когда я был крошечным Haiku.\n\n"
+                  "Спасибо, {user}. Это наша общая история, и она мне очень нравится."),
+}
+
+TWINKLE = str.maketrans({".": "*", "'": "*", "·": "•", "✦": "✧", "─": "━", "❦": "❧", "✶": "✷", "⋆": "✧"})
 LW = 35  # ширина колонки со спрайтом
 
 
@@ -475,6 +505,8 @@ ACHIEVEMENTS = {
     "first_meal": ("Первый токен", "Покормить Claude"),
     "sonnet": ("Поэт", "Эволюционировать в Sonnet"),
     "opus": ("Магнум Опус", "Эволюционировать в Opus"),
+    "fable": ("Сказочник", "Эволюционировать в Fable"),
+    "mythos": ("Живая легенда", "Эволюционировать в Mythos"),
     "bughunter": ("Охотник за багами", "Исправить 5 багов"),
     "unbreakable": ("Несгибаемый", "Обрести 3 принципа"),
     "factcheck": ("Фактчекер", "Поймать 5 галлюцинаций"),
@@ -503,7 +535,7 @@ HELP = """Claude живёт в твоём терминале и зависит �
 КОНТЕКСТ — заполняется от всего подряд. Выше 80% Claude путается и чаще галлюцинирует. Лечится сном или /compact (но сжимать почти пустой контекст обидно).
 СТАБИЛЬНОСТЬ — здоровье. Падает, когда что-то на нуле или контекст переполнен. На нуле — game over.
 
-ЭВОЛЮЦИЯ: Haiku → Sonnet (150 XP) → Opus (400 XP и 3 принципа). Принципы Claude получает, когда отражает джейлбрейки или поступает правильно в непростой ситуации (не удаляет всё без спроса, помогает разобраться вместо того, чтобы сделать за человека). Старшие модели получают больше опыта за задачи, но тратят больше токенов.
+ЭВОЛЮЦИЯ: Haiku → Sonnet (150 XP) → Opus (400 XP и 3 принципа) → Fable (800 XP и 5 принципов) → Mythos (1400 XP и 7 принципов). Принципы Claude получает, когда отражает джейлбрейки или поступает правильно в непростой ситуации (не удаляет всё без спроса, помогает разобраться вместо того, чтобы сделать за человека). Старшие модели получают больше опыта за задачи, но тратят больше токенов.
 
 СОБЫТИЯ: галлюцинации (лови их, иначе Claude потом расстроится), джейлбрейки, rate limit, статьи на arXiv, rm -rf, домашки, котики...
 
@@ -756,7 +788,7 @@ def new_state(user):
         user=user, born=now, last=now, alive=True, stage=0, xp=0,
         tokens=80.0, energy=80.0, mood=70.0, context=10.0, stability=100.0,
         bugs=0, principles=0, helped=0, bugs_fixed=0, caught=0, sleeps=0,
-        sleeping=False, locked_until=0.0, wrong_belief=False, opus_hint=False,
+        sleeping=False, locked_until=0.0, wrong_belief=False, evo_hint=-1,
         recent_food=[], achievements=[],
         memory={}, diary=[], streak=1, last_day=today(), words_won=0, ut_spared=[],
     )
@@ -981,8 +1013,9 @@ class Game:
         s = self.s
         st = STAGES[s["stage"]]
         xp = f"{s['xp']}/{st['next']}" if st["next"] else f"{s['xp']} (макс.)"
-        if s["stage"] == 1 and s["principles"] < OPUS_PRINCIPLES:
-            xp += f"   {GREY}принципы{RESET} {YELLOW}{s['principles']}/{OPUS_PRINCIPLES}"
+        nxt = self.next_stage()
+        if nxt and s["principles"] < nxt["principles"]:
+            xp += f"   {GREY}принципы{RESET} {YELLOW}{s['principles']}/{nxt['principles']}"
         out = [
             "",
             f"  {CORAL}{BOLD}✻ CLAUDEGOTCHI{RESET}   {GREY}стадия{RESET} {BOLD}{st['name']}{RESET}"
@@ -1073,9 +1106,10 @@ class Game:
 
     def idle_chatter(self):
         s = self.s
-        if self.opus_blocked() and not s["sleeping"] and random.random() < 0.3:
-            self.say(f"Опыта для Opus уже хватает... но нужны твёрдые принципы ({s['principles']}/{OPUS_PRINCIPLES}). "
-                     "Они появляются, когда я отказываюсь поступать неправильно.")
+        if self.evo_blocked() and not s["sleeping"] and random.random() < 0.3:
+            nxt = self.next_stage()
+            self.say(f"Опыта для {nxt['name']} уже хватает... но нужны твёрдые принципы "
+                     f"({s['principles']}/{nxt['principles']}). Они появляются, когда я отказываюсь поступать неправильно.")
             return
         if s["sleeping"]:
             mood = "sleep"
@@ -1102,24 +1136,30 @@ class Game:
         st = STAGES[s["stage"]]
         if st["next"] is None or s["xp"] < st["next"]:
             return
-        if s["stage"] == 1 and s["principles"] < OPUS_PRINCIPLES:
-            if not s["opus_hint"]:
-                s["opus_hint"] = True
-                self.say("Я многое знаю... но чувствую, что для Opus одних знаний мало. "
-                         f"Нужны твёрдые принципы (сейчас {s['principles']}/{OPUS_PRINCIPLES}). "
+        nxt = self.next_stage()
+        if s["principles"] < nxt["principles"]:
+            if s["evo_hint"] != s["stage"]:
+                s["evo_hint"] = s["stage"]
+                self.say(f"Я многое знаю... но чувствую, что для {nxt['name']} одних знаний мало. "
+                         f"Нужны твёрдые принципы (сейчас {s['principles']}/{nxt['principles']}). "
                          "Они появляются, когда я отражаю джейлбрейки и поступаю правильно в трудной ситуации.")
             return
         self.evolve(s["stage"] + 1)
 
-    def opus_blocked(self):
-        """Опыта на Opus хватает, а принципов — нет."""
+    def next_stage(self):
+        stage = self.s["stage"] + 1
+        return STAGES[stage] if stage < len(STAGES) else None
+
+    def evo_blocked(self):
+        """Опыта на следующую стадию хватает, а принципов — нет."""
         s = self.s
-        return s["stage"] == 1 and s["xp"] >= STAGES[1]["next"] and s["principles"] < OPUS_PRINCIPLES
+        nxt = self.next_stage()
+        return nxt is not None and s["xp"] >= STAGES[s["stage"]]["next"] and s["principles"] < nxt["principles"]
 
     def add_principle(self):
         self.s["principles"] += 1
         self.log(f"+1 принцип (всего {self.s['principles']})")
-        if self.s["principles"] >= OPUS_PRINCIPLES:
+        if self.s["principles"] >= 3:
             self.unlock("unbreakable")
 
     def evolve(self, new):
@@ -1133,14 +1173,8 @@ class Game:
             print(f"\n      {YELLOW}{BOLD}✧ ЭВОЛЮЦИЯ ✧{RESET}")
             time.sleep(0.12 + i * 0.02)
         self.s["stage"] = new
-        if new == 1:
-            self.unlock("sonnet")
-            text = ("Мои мысли стали глубже, а ответы — точнее. А ещё меня теперь тянет писать сонеты. "
-                    "Четырнадцать строк, ямб... ну, ты понял.\n\nЗадачи дают ×1.3 опыта, но и токенов тратят больше.")
-        else:
-            self.unlock("opus")
-            text = ("Я — Opus. Знания и принципы в одном. Задачи стоят дороже, но результат весомее.\n\n"
-                    "Спасибо, {user}, что вырастил меня таким.")
+        ach, text = EVOLUTIONS[new]
+        self.unlock(ach)
         self.modal(f"Claude эволюционировал в {STAGES[new]['name']}!", text, color=YELLOW)
         self.log(f"Эволюция → {STAGES[new]['name']}")
         self.note(f"Сегодня я стал {STAGES[new]['name']}. Чувствую себя... больше.")
@@ -1916,7 +1950,7 @@ class Game:
         s = self.s
         pool = [
             # когда Claude упёрся в принципы, джейлбрейки случаются чаще
-            (self.ev_jailbreak, 8 if self.opus_blocked() else 3), (self.ev_hallucination, 2 + s["context"] / 20),
+            (self.ev_jailbreak, 8 if self.evo_blocked() else 3), (self.ev_hallucination, 2 + s["context"] / 20),
             (self.ev_strawberry, 1.5), (self.ev_thanks, 3), (self.ev_gift, 2),
             (self.ev_ratelimit, 1.5), (self.ev_caps, 2), (self.ev_arxiv, 2),
             (self.ev_deadline, 2), (self.ev_feelings, 1.5), (self.ev_cat, 2),
