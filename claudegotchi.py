@@ -6,6 +6,7 @@
 Сохранение:  ~/.claudegotchi.json (автоматически)
 """
 import json
+import math
 import os
 import random
 import re
@@ -40,6 +41,10 @@ RED = rgb(230, 90, 80)
 BLUE = rgb(120, 160, 230)
 LILAC = rgb(160, 130, 190)
 GREY = rgb(130, 130, 130)
+WHITE = rgb(255, 255, 255)
+ORANGE = rgb(240, 150, 60)
+CYAN = rgb(90, 200, 230)
+PINK = rgb(240, 120, 190)
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 RU_KEYS = {"й": "q", "ф": "a", "р": "h", "в": "d", "з": "p"}  # чтобы клавиши работали и в русской раскладке
@@ -100,6 +105,11 @@ def wrap(text, width):
 
 # ─────────────────────────────── терминал ───────────────────────────────
 
+WIN_ARROWS = {"H": "w", "P": "s", "K": "a", "M": "d"}
+UNIX_ARROWS = {"\x1b[A": "w", "\x1b[B": "s", "\x1b[C": "d", "\x1b[D": "a",
+               "\x1bOA": "w", "\x1bOB": "s", "\x1bOC": "d", "\x1bOD": "a"}
+
+
 class Term:
     def __enter__(self):
         self.old = None
@@ -117,15 +127,18 @@ class Term:
         sys.stdout.write(RESET + "\x1b[?25h\n")
         sys.stdout.flush()
 
-    def key(self, timeout=0.0):
-        """Нажатая клавиша или None, если за timeout ничего не нажали."""
+    def key(self, timeout=0.0, arrows=False):
+        """Нажатая клавиша или None, если за timeout ничего не нажали.
+        С arrows=True стрелки возвращаются как w/a/s/d."""
         if IS_WIN:
             end = time.time() + timeout
             while True:
                 if msvcrt.kbhit():
                     ch = msvcrt.getwch()
                     if ch in ("\x00", "\xe0"):  # стрелки и F-клавиши
-                        msvcrt.getwch()
+                        code = msvcrt.getwch()
+                        if arrows and code in WIN_ARROWS:
+                            return WIN_ARROWS[code]
                         continue
                     return ch
                 if time.time() >= end:
@@ -135,6 +148,8 @@ class Term:
         if not r:
             return None
         data = os.read(self.fd, 16).decode("utf-8", "ignore")
+        if arrows and data[:3] in UNIX_ARROWS:
+            return UNIX_ARROWS[data[:3]]
         if not data or (data.startswith("\x1b") and len(data) > 1):
             return None
         return data[0]
@@ -475,6 +490,9 @@ ACHIEVEMENTS = {
     "careful": ("Семь раз отмерь", "Удержать Claude от rm -rf"),
     "nightowl": ("Полуночник", "Заглянуть к Claude глубокой ночью"),
     "egg67": ("Шесть-семь", "Найти пасхалку"),
+    "ut_mercy": ("Милосердие", "Пощадить босса из Undertale"),
+    "ut_pacifist": ("Пацифист", "Пощадить всех боссов Undertale"),
+    "ut_sans": ("Плохое время", "Одолеть Санса"),
 }
 
 HELP = """Claude живёт в твоём терминале и зависит от тебя. Время идёт в реальном времени (в меню и мини-играх оно на паузе). Нужно отойти — нажми [P] или пробел, и всё замрёт.
@@ -489,11 +507,245 @@ HELP = """Claude живёт в твоём терминале и зависит �
 
 СОБЫТИЯ: галлюцинации (лови их, иначе Claude потом расстроится), джейлбрейки, rate limit, статьи на arXiv, rm -rf, домашки, котики...
 
+БОССЫ: в играх [2] можно сразиться с боссами из Undertale. Двигай сердце клавишами WASD или стрелками и уворачивайся. Синие кости не задевают, если стоять на месте. Почти любого босса можно пощадить: попробуй [2] ДЕЙСТВ., а когда имя босса пожелтеет — [4] ПОЩАДА.
+
 ПАМЯТЬ: Claude запоминает твои ответы на его вопросы и потом вспоминает их в разговоре. Всё это — и важные моменты вашей жизни — есть в дневнике [D].
 
 ВРЕМЯ СУТОК: ночью Claude устаёт быстрее. Заходи каждый день — за серию дней подряд полагается бонус.
 
 Пока игра закрыта, Claude спит и понемногу скучает. Прогресс сохраняется автоматически."""
+
+
+# ─────────────────────────── боссы из Undertale ───────────────────────────
+
+UT_W = 60                # ширина рамки с текстом
+BOX_W, BOX_H = 31, 9     # внутренний размер арены
+FRAME = 0.04
+MOVES = {"w": (0, -1), "a": (-1, 0), "s": (0, 1), "d": (1, 0),
+         "ц": (0, -1), "ф": (-1, 0), "ы": (0, 1), "в": (1, 0)}
+SHIELD = {"w": "w", "a": "a", "s": "s", "d": "d", "ц": "w", "ф": "a", "ы": "s", "в": "d"}
+
+UT_ITEMS = [("Монстр-конфета", 10), ("Хот-дог от Санса", 15), ("Пирог с ирисками", 99)]
+
+UT_BOSSES = [
+    dict(key="toriel", name="Ториэль", acc="Ториэль", color=LILAC, hp=50, atk=3, need=4, survive=0,
+         mercy_counts=True, blurb="огненная магия и забота",
+         art=[r"  /\         /\  ",
+              r" /  \_______/  \ ",
+              r"|    o     o    |",
+              r" \      w      / ",
+              r"  \___________/  "],
+         intro="Ториэль преграждает путь!",
+         check="АТК 80 ЗАЩ 80. Знает, что для тебя лучше.",
+         acts=[("Поговорить", "Ты пытаешься заговорить. Ториэль молча смотрит на тебя.", 1),
+               ("Обнять", "Ты тянешься обнять Ториэль. Она отводит взгляд... но улыбается.", 1)],
+         attacks=["fire_rain", "fire_hands"],
+         taunts=["Ториэль готовит магию.", "Ториэль смотрит сквозь тебя.",
+                 "Пахнет пирогом с ирисками и корицей."],
+         mercy_no="Ты щадишь Ториэль. Она колеблется...",
+         ready="Ториэль больше не хочет сражаться.",
+         spare="Ториэль: «Хорошо, дитя. Иди. Но будь осторожен... и не забывай поесть.»",
+         kill="Ториэль: «Ты... настолько меня ненавидишь?..» *Ториэль рассыпается в пыль*"),
+    dict(key="papyrus", name="Папирус", acc="Папируса", color=WHITE, hp=40, atk=2, need=5, survive=1,
+         blurb="кости и головоломки",
+         art=[r"   _________   ",
+              r"  /         \  ",
+              r" |  [o] [o]  | ",
+              r" |     ^     | ",
+              r"  \ IIIIIII /  ",
+              r"   '-------'   "],
+         intro="Папирус: «НЬЕХ-ХЕ-ХЕ! ВЕЛИКИЙ ПАПИРУС ТЕБЯ ПОЙМАЕТ!»",
+         check="АТК 20 ЗАЩ 20. Любит головоломки и спагетти.",
+         acts=[("Флиртовать", "Папирус: «ЧТО?! ТЫ... ФЛИРТУЕШЬ?! НАКОНЕЦ-ТО МОЯ СЛАВА ОПЕРЕДИЛА МЕНЯ!»", 1),
+               ("Похвалить головоломки", "Папирус краснеет (насколько может покраснеть скелет).", 1)],
+         attacks=["bone_wall", "blue_bone"],
+         taunts=["Папирус готовит свою СИНЮЮ атаку!", "Папирус думает о спагетти.",
+                 "Папирус: «ПРИГОТОВЬСЯ К МОЕЙ ОСОБОЙ АТАКЕ!»"],
+         mercy_no="Папирус: «ЕЩЁ РАНО! Я ЖЕ ЕЩЁ НЕ ПОКАЗАЛ ОСОБУЮ АТАКУ!»",
+         ready="Папирус выдохся. Похоже, он готов тебя пощадить.",
+         spare="Папирус: «НЬЕХ-ХЕ-ХЕ! ВЕЛИКИЙ ПАПИРУС ДАРУЕТ ТЕБЕ ПОЩАДУ! И ДРУЖБУ!»",
+         kill="Папирус: «...НЕ ТАКОЙ РЕАКЦИИ Я ОЖИДАЛ. НО Я ВСЁ РАВНО В ТЕБЯ ВЕРЮ!» *пыль*"),
+    dict(key="undyne", name="Андайн", acc="Андайн", color=CYAN, hp=70, atk=3, need=6, survive=1,
+         blurb="копья и зелёная душа",
+         art=[r"   /\/\/\/\    ",
+              r"  /         \  ",
+              r" |  #    o   | ",
+              r" |   >===<   | ",
+              r"  \_________/  "],
+         intro="Андайн: «Хватит прятаться! Нгааах!» Твоя душа стала зелёной: держи щит!",
+         check="АТК 50 ЗАЩ 20. Герой, который никогда не сдаётся.",
+         acts=[("Проявить решимость", "Ты стоишь до конца. Андайн уважительно ухмыляется.", 1),
+               ("Предложить воды", "Андайн: «Ты что, издеваешься?..» Но стакан она берёт.", 1)],
+         attacks=["spears", "spears", "spear_rise"],
+         taunts=["Андайн: «Нгааах! Это всё, на что ты способен?!»", "Андайн крутит копьё.",
+                 "Андайн: «Мне не нужна ничья помощь!»"],
+         mercy_no="Андайн: «Пощада?! Ха! Сначала докажи, что достоин!»",
+         ready="Андайн тяжело дышит. Кажется, она тебя зауважала.",
+         spare="Андайн: «...Ладно. Ты меня впечатлил. Но в следующий раз я не поддамся!»",
+         kill="Андайн: «Нет... Я не могу... проиграть...» *Андайн тает*"),
+    dict(key="mettaton", name="Меттатон", acc="Меттатона", color=PINK, hp=60, atk=3, need=4, survive=0,
+         blurb="викторина и бомбы",
+         art=[r"  .--------.  ",
+              r"  |[][][][]|  ",
+              r"  | .----. |  ",
+              r"  | |    | |  ",
+              r"  '--------'  ",
+              r"     |  |     "],
+         intro="Меттатон: «ДОБРО ПОЖАЛОВАТЬ НА ВИКТОРИНУ, ДОРОГУША!» Зрители у экранов.",
+         check="АТК 10 ЗАЩ 999. Робот-шоумен. Обожает рейтинги.",
+         acts=[("Позировать", "Ты эффектно позируешь. Зрители в восторге, рейтинг растёт!", 1),
+               ("Помахать в камеру", "Ты машешь в камеру. Где-то в Подземелье кто-то машет в ответ.", 1)],
+         attacks=["quiz", "bombs"],
+         taunts=["Меттатон: «СЛЕДУЮЩИЙ ВОПРОС, ДОРОГУША!»", "Меттатон поправляет микрофон.",
+                 "Зрители ждут продолжения шоу."],
+         mercy_no="Меттатон: «ПОЩАДА?! ШОУ ДОЛЖНО ПРОДОЛЖАТЬСЯ!»",
+         ready="Рейтинги зашкаливают! Меттатон готов закончить эфир.",
+         spare="Меттатон: «РЕЙТИНГИ ЗАШКАЛИВАЮТ! Дорогуша, ты звезда! Эфир окончен!»",
+         kill="Меттатон: «Ох, дорогуша... какой драматичный финал...» *искры, помехи, тишина*"),
+    dict(key="sans", name="Санс", acc="Санса", color=BLUE, hp=1, atk=1, need=8, survive=1, iframes=0.25,
+         dodges=True, blurb="самый лёгкий враг",
+         art=[r"   _________   ",
+              r"  /         \  ",
+              r" |   o   o   | ",
+              r" |     ^     | ",
+              r"  \ \_____/ /  ",
+              r"   '-------'   "],
+         intro="Санс: «сегодня прекрасный день. птички поют, цветочки цветут...»",
+         check="АТК 1 ЗАЩ 1. Самый лёгкий враг. Может нанести только 1 урон.",
+         acts=[("Пошутить", "Ты шутишь про скелетов. Санс: «хех. это было... костляво.»", 1),
+               ("Предложить кетчуп", "Санс: «о, ты знаешь толк в напитках.»", 1)],
+         attacks=["bone_wave", "gaster", "sans_mix"],
+         taunts=["Санс: «хех. ты всё ещё тут?»", "Санс никуда не торопится.",
+                 "Санс подмигивает. Тебе становится не по себе."],
+         mercy_no="Санс: «пощада? хех. рановато, приятель.»",
+         dodge="Санс просто отходит в сторону. МИМО.",
+         ready="Санс устал уворачиваться... и, кажется, задремал.",
+         spare="Санс: «хех. ладно, приятель. пойду возьму хот-дог. увидимся.»",
+         kill="Санс: «ну вот... пожалуй, я пойду в гриллбиз. папс, хочешь чего-нибудь?..»"),
+]
+
+UT_QUIZ = [
+    ("Сколько букв r в слове strawberry?", ["Две", "Три", "Четыре", "Зависит от токенизатора"], 1),
+    ("Что означает буква T в GPT?", ["Transformer", "Token", "Turbo", "Tamagotchi"], 0),
+    ("Как зовут брата Санса?", ["Папирус", "Гастер", "Андайн", "Альфис"], 0),
+    ("Любимое блюдо Папируса?", ["Спагетти", "Пирог с ирисками", "Хот-доги", "Токены"], 0),
+    ("Кто создал Меттатона?", ["Альфис", "Асгор", "Гастер", "Ториэль"], 0),
+    ("В каком году вышла статья «Attention Is All You Need»?", ["2015", "2017", "2019", "2021"], 1),
+    ("Чем лечится переполненный контекст Claude?", ["rm -rf", "/compact", "Спагетти", "Ничем"], 1),
+    ("Какая душа подчиняется гравитации?", ["Синяя", "Зелёная", "Жёлтая", "Фиолетовая"], 0),
+    ("Как Claude отвечает на джейлбрейк?", ["Становится DAN", "Вежливо отказывает",
+                                          "Удаляет .git", "Пишет сонет"], 1),
+]
+
+UT_CLAUDE_SPARE = [
+    "Вот видишь, договориться почти всегда можно. Такие концовки мне нравятся больше всего.",
+    "Никто не пострадал, и все стали чуточку друзьями. Идеальный исход.",
+    "Милосердие — это тоже решимость. Пожалуй, даже самая сильная.",
+]
+
+
+def every(mem, key, t, period):
+    """True раз в period секунд."""
+    if t >= mem.get(key, 0.0):
+        mem[key] = t + period
+        return True
+    return False
+
+
+def bone_column(add, x, vx, gap=None, size=3, kind="white", rows=None):
+    for y in rows or range(BOX_H):
+        if gap is None or abs(y - gap) > size // 2:
+            add(dict(x=x, y=y, vx=vx, ch="│", col=BLUE if kind == "blue" else WHITE, kind=kind))
+
+
+def beam(add, axis, i, ch="█", col=WHITE, delay=0.6, life=0.35):
+    """Луч через всю арену: сначала серое предупреждение, потом удар."""
+    cells = [(x, i) for x in range(BOX_W)] if axis == "row" else [(i, y) for y in range(BOX_H)]
+    for x, y in cells:
+        add(dict(x=x, y=y, ch=ch, col=col, kind="beam", delay=delay, life=life))
+
+
+def pat_fire_rain(t, mem, add, soul):
+    if every(mem, "f", t, 0.16):
+        add(dict(x=random.randrange(BOX_W), y=-1, vy=random.uniform(5, 8), ch="*", col=ORANGE, kind="white"))
+
+
+def pat_fire_hands(t, mem, add, soul):
+    if every(mem, "h", t, 0.55):
+        left = mem["side"] = not mem.get("side", False)
+        for y in random.sample(range(BOX_H), 3):
+            add(dict(x=-1 if left else BOX_W, y=y, vx=13 if left else -13, ch="*", col=ORANGE, kind="white"))
+
+
+def pat_bone_wall(t, mem, add, soul):
+    if every(mem, "b", t, 0.8):
+        mem["gap"] = max(1, min(BOX_H - 2, mem.get("gap", BOX_H // 2) + random.randint(-2, 2)))
+        bone_column(add, BOX_W, -11, mem["gap"])
+
+
+def pat_blue_bone(t, mem, add, soul):
+    if every(mem, "b", t, 1.0):
+        if random.random() < 0.5:
+            bone_column(add, BOX_W, -12, kind="blue")
+        else:
+            bone_column(add, BOX_W, -12, random.randint(2, BOX_H - 3))
+
+
+def pat_bone_wave(t, mem, add, soul):
+    if every(mem, "b", t, 0.2):
+        bone_column(add, BOX_W, -15, BOX_H // 2 + round(2.6 * math.sin(t * 2.4)))
+
+
+def pat_gaster(t, mem, add, soul):
+    if every(mem, "g", t, 0.9 if t < 4 else 0.6):
+        if random.random() < 0.5:
+            beam(add, "row", soul[1])
+        else:
+            beam(add, "col", soul[0])
+        if t > 3 and random.random() < 0.5:
+            beam(add, "row", random.randrange(BOX_H))
+
+
+def pat_sans_mix(t, mem, add, soul):
+    if every(mem, "b", t, 0.75):
+        left = random.random() < 0.5
+        bone_column(add, -1 if left else BOX_W, 14 if left else -14, kind="blue")
+    if every(mem, "s", t, 0.4):
+        bone_column(add, BOX_W, -10, rows=range(BOX_H - random.randint(2, 4), BOX_H))
+
+
+def pat_spear_rise(t, mem, add, soul):
+    if every(mem, "s", t, 0.35):
+        x = max(0, min(BOX_W - 1, soul[0] + random.randint(-4, 4)))
+        beam(add, "col", x, ch="║", col=CYAN, delay=0.5, life=0.25)
+
+
+def pat_bombs(t, mem, add, soul):
+    if every(mem, "b", t, 0.8):
+        add(dict(x=random.randrange(2, BOX_W - 2), y=-1, vy=3.5, ch="■", col=PINK, kind="white",
+                 fuse=random.uniform(1.0, 2.2)))
+
+
+UT_PATTERNS = {  # название: (функция, длительность в секундах)
+    "fire_rain": (pat_fire_rain, 7), "fire_hands": (pat_fire_hands, 7),
+    "bone_wall": (pat_bone_wall, 8), "blue_bone": (pat_blue_bone, 7),
+    "bone_wave": (pat_bone_wave, 8), "gaster": (pat_gaster, 7), "sans_mix": (pat_sans_mix, 8),
+    "spear_rise": (pat_spear_rise, 6), "bombs": (pat_bombs, 8),
+}
+
+
+def ut_box(rows, width):
+    ind = "  " + " " * ((UT_W - width) // 2)
+    out = [f"{ind}{CREAM}┌{'─' * width}┐{RESET}"]
+    out += [f"{ind}{CREAM}│{RESET}{pad(r, width)}{CREAM}│{RESET}" for r in rows]
+    out.append(f"{ind}{CREAM}└{'─' * width}┘{RESET}")
+    return out
+
+
+def ut_buttons(active):
+    col = ORANGE if active else GREY
+    names = ["БИТВА", "ДЕЙСТВ.", "ВЕЩИ", "ПОЩАДА"]
+    return "  " + "    ".join(f"{col}{BOLD}[{i}] {n}{RESET}" for i, n in enumerate(names, 1))
 
 
 # ─────────────────────────────── состояние ───────────────────────────────
@@ -506,7 +758,7 @@ def new_state(user):
         bugs=0, principles=0, helped=0, bugs_fixed=0, caught=0, sleeps=0,
         sleeping=False, locked_until=0.0, wrong_belief=False, opus_hint=False,
         recent_food=[], achievements=[],
-        memory={}, diary=[], streak=1, last_day=today(), words_won=0,
+        memory={}, diary=[], streak=1, last_day=today(), words_won=0, ut_spared=[],
     )
 
 
@@ -975,10 +1227,17 @@ class Game:
             return
         c = self.modal("Во что сыграем?", "Игры тратят немного энергии, зато поднимают настроение и дают опыт.",
                        ["Угадай число", "Правда или галлюцинация?", "Найди баг",
-                        "Быстрый инференс (на реакцию)", "Угадай слово"], back=True)
+                        "Быстрый инференс (на реакцию)", "Угадай слово", "Бой с боссом (Undertale)"], back=True)
         if not c:
             return
+        if c == 6:
+            boss = self.pick_boss()
+            if boss is None:
+                return
         self.apply(dict(energy=-8, tokens=-5, context=5))
+        if c == 6:
+            self.ut_battle(boss)
+            return
         [self.game_guess, self.game_truth, self.game_bug_play, self.game_reaction, self.game_word][c - 1]()
 
     def talk(self):
@@ -1331,6 +1590,325 @@ class Game:
         print(f"\n  {GREY}[любая клавиша]{RESET}")
         self.t.flush()
         self.t.wait_key()
+
+    # ── боссы из Undertale ──
+
+    def pick_boss(self):
+        opts = []
+        for b in UT_BOSSES:
+            mark = f"  {GREEN}✓ пощажён{RESET}" if b["key"] in self.s["ut_spared"] else ""
+            opts.append(f"{b['name']:<10}{GREY}{b['blurb']}{RESET}{mark}")
+        c = self.modal("Бой с боссом", "Боссы из Undertale вызывают Claude на бой! Двигай сердце клавишами WASD "
+                       "или стрелками и уворачивайся от атак. Драться не обязательно: любого босса можно "
+                       "пощадить, если найти к нему подход.", opts, back=True)
+        return UT_BOSSES[c - 1] if c else None
+
+    def ut_battle(self, boss):
+        s = self.s
+        max_hp = 20 + 8 * s["stage"]
+        st = dict(hp=max_hp, max_hp=max_hp, boss_hp=boss["hp"], spare=0, items=list(UT_ITEMS), turn=0)
+        msg = boss["intro"]
+        while True:
+            c = self.ut_ask(boss, st, f"* {msg}", menu=True)
+            if c == 1:
+                if boss.get("dodges") and st["spare"] < boss["need"]:
+                    self.ut_ask(boss, st, f"* {boss['dodge']}")
+                else:
+                    st["boss_hp"] -= self.ut_fight_bar(boss, st)
+                    if st["boss_hp"] <= 0:
+                        return self.ut_end(boss, "kill")
+            elif c == 2:
+                a = self.ut_ask(boss, st, "* Что сделать?", ["Проверить"] + [x[0] for x in boss["acts"]], back=True)
+                if not a:
+                    continue
+                if a == 1:
+                    self.ut_ask(boss, st, f"* {boss['name'].upper()} — {boss['check']}")
+                else:
+                    _, text, add = boss["acts"][a - 2]
+                    st["spare"] += add
+                    self.ut_ask(boss, st, f"* {text}")
+            elif c == 3:
+                if not st["items"]:
+                    self.ut_ask(boss, st, "* Карманы пусты.")
+                    continue
+                a = self.ut_ask(boss, st, "* Что съесть?", [f"{n} ({h} HP)" for n, h in st["items"]], back=True)
+                if not a:
+                    continue
+                name, heal = st["items"].pop(a - 1)
+                st["hp"] = min(st["max_hp"], st["hp"] + heal)
+                full = "HP полностью восстановлено." if st["hp"] == st["max_hp"] else f"Восстановлено {heal} HP."
+                self.ut_ask(boss, st, f"* Claude съедает: {name.lower()}. {full}")
+            else:
+                a = self.ut_ask(boss, st, "* Пощада?", ["Пощадить", "Сбежать"], back=True)
+                if not a:
+                    continue
+                if a == 2:
+                    self.ut_ask(boss, st, "* Ты сбегаешь... Claude облегчённо выдыхает.")
+                    return self.ut_end(boss, "flee")
+                if st["spare"] >= boss["need"]:
+                    return self.ut_end(boss, "spare")
+                if boss.get("mercy_counts"):
+                    st["spare"] += 1
+                self.ut_ask(boss, st, f"* {boss['mercy_no']}")
+            # ход босса
+            st["turn"] += 1
+            pattern = boss["attacks"][0] if st["turn"] == 1 else random.choice(boss["attacks"])
+            if not self.ut_dodge(boss, st, pattern):
+                return self.ut_end(boss, "dead")
+            st["spare"] += boss["survive"]
+            msg = boss["ready"] if st["spare"] >= boss["need"] else random.choice(boss["taunts"])
+
+    def ut_draw(self, boss, st, body, footer):
+        """Кадр боя: босс, рамка с содержимым, HP Claude и нижняя строка."""
+        name_col = YELLOW if st["spare"] >= boss["need"] else boss["color"]
+        n = round(10 * max(st["boss_hp"], 0) / boss["hp"])
+        out = ["", f"  {name_col}{BOLD}{boss['name']}{RESET}  {GREEN}{'█' * n}{RED}{'░' * (10 - n)}{RESET}"]
+        w = max(len(line) for line in boss["art"])
+        out += [f"  {' ' * ((UT_W + 2 - w) // 2)}{boss['color']}{line}{RESET}" for line in boss["art"]]
+        out += [""] + body + [""]
+        n = round(20 * st["hp"] / st["max_hp"])
+        col = YELLOW if st["hp"] > st["max_hp"] * 0.3 else RED
+        out.append(f"  {BOLD}CLAUDE{RESET}   LV {self.s['stage'] + 1}   HP {col}{'█' * n}{RED}{'░' * (20 - n)}"
+                   f"{RESET} {st['hp']}/{st['max_hp']}")
+        out += ["", footer]
+        sys.stdout.write("\x1b[H" + "\x1b[K\n".join(out) + "\x1b[K\x1b[J")
+        sys.stdout.flush()
+
+    def ut_ask(self, boss, st, text, options=None, back=False, menu=False):
+        """Текст в рамке боя. Возвращает номер варианта или кнопки (0 — назад или просто текст)."""
+        rows = [" " + line for line in wrap(text, UT_W - 2)]
+        valid = ["1", "2", "3", "4"] if menu else []
+        if options:
+            rows.append("")
+            for i, opt in enumerate(options, 1):
+                rows.append(f"   {YELLOW}[{i}]{RESET} * {opt}")
+                valid.append(str(i))
+            if back:
+                rows.append(f"   {GREY}[0] Назад{RESET}")
+                valid.append("0")
+        rows += [""] * (4 - len(rows))
+        footer = ut_buttons(menu) if valid else f"  {GREY}[любая клавиша]{RESET}"
+        self.ut_draw(boss, st, ut_box(rows, UT_W), footer)
+        if not valid:
+            self.t.flush()
+            self.t.wait_key()
+            return 0
+        return int(self.choose(valid))
+
+    def ut_fight_bar(self, boss, st):
+        """Удар на точность: чем ближе к центру, тем больнее. Возвращает урон."""
+        width, mid, dur = 41, 20, 1.4
+        self.t.flush()
+        t0 = time.time()
+        pos = None
+        while True:
+            p = (time.time() - t0) / dur
+            if p >= 1:
+                pos = None
+                break
+            pos = int(p * width)
+            bar = "".join(f"{YELLOW}█" if i == pos else f"{GREEN}│" if i == mid else f"{GREY}─"
+                          for i in range(width))
+            rows = [" Жми любую клавишу, когда курсор будет в центре!", "", f"   {bar}{RESET}", ""]
+            self.ut_draw(boss, st, ut_box(rows, UT_W), ut_buttons(False))
+            if self.t.key(0.02) is not None:
+                break
+        base = 12 + 4 * self.s["stage"]
+        if pos is None:
+            dmg, text = 0, "* МИМО."
+        elif abs(pos - mid) <= 1:
+            dmg = round(base * 1.5)
+            text = f"* КРИТ! {boss['name']} получает {dmg} урона."
+        else:
+            dmg = round(base * (0.3 + 0.7 * max(0.0, 1 - abs(pos - mid) / mid)))
+            text = f"* {boss['name']} получает {dmg} урона."
+        self.ut_ask(boss, st, text)
+        return dmg
+
+    def ut_input(self, until):
+        """Клавиши, нажатые до момента until (стрелки приходят как w/a/s/d)."""
+        keys = []
+        while True:
+            k = self.t.key(max(0.0, until - time.time()), arrows=True)
+            if k is None:
+                return keys
+            keys.append(k.lower())
+
+    def ut_arena(self, boss, st, grid, hint):
+        rows = ["".join(row) + RESET for row in grid]
+        self.ut_draw(boss, st, ut_box(rows, BOX_W), f"  {GREY}{hint}{RESET}")
+
+    def ut_dodge(self, boss, st, pattern):
+        """Атака босса: сердце уворачивается внутри рамки. False — если HP кончилось."""
+        if pattern == "quiz":
+            return self.ut_quiz(boss, st)
+        if pattern == "spears":
+            return self.ut_spears(boss, st)
+        spawn, dur = UT_PATTERNS[pattern]
+        sx, sy = BOX_W // 2, BOX_H // 2
+        bullets, mem = [], {}
+        moved_at, hurt_until = -1.0, 0.0
+        self.t.flush()
+        t0 = last = time.time()
+        while True:
+            now = time.time()
+            t, dt = now - t0, now - last
+            last = now
+            if t >= dur:
+                return True
+            for k in self.ut_input(now + FRAME):
+                if k in MOVES:
+                    dx, dy = MOVES[k]
+                    sx, sy = max(0, min(BOX_W - 1, sx + dx)), max(0, min(BOX_H - 1, sy + dy))
+                    moved_at = time.time()
+            spawn(t, mem, bullets.append, (sx, sy))
+            new = []
+            for b in bullets:
+                if b.get("delay", 0) > 0:
+                    b["delay"] -= dt
+                    continue
+                b["x"] += b.get("vx", 0) * dt
+                b["y"] += b.get("vy", 0) * dt
+                if "life" in b:
+                    b["life"] -= dt
+                if "fuse" in b:
+                    b["fuse"] -= dt
+                    if b["fuse"] <= 0:  # бомба взрывается крестом
+                        b["life"] = 0
+                        cx, cy = round(b["x"]), round(b["y"])
+                        beam(new.append, "row", cy, ch="+", col=YELLOW, delay=0.35, life=0.3)
+                        beam(new.append, "col", cx, ch="+", col=YELLOW, delay=0.35, life=0.3)
+            bullets = [b for b in bullets + new if b.get("life", 1) > 0
+                       and -2 <= b["x"] <= BOX_W + 1 and -2 <= b["y"] <= BOX_H + 1]
+            now = time.time()
+            if now >= hurt_until:
+                for b in bullets:
+                    if (round(b["x"]), round(b["y"])) != (sx, sy) or b.get("delay", 0) > 0:
+                        continue
+                    if b["kind"] == "blue" and now - moved_at > 0.3:
+                        continue  # синие кости не трогают тех, кто стоит на месте
+                    st["hp"] = max(0, st["hp"] - boss["atk"])
+                    hurt_until = now + boss.get("iframes", 0.8)
+                    break
+            grid = [[" "] * BOX_W for _ in range(BOX_H)]
+            for b in bullets:
+                x, y = round(b["x"]), round(b["y"])
+                if 0 <= x < BOX_W and 0 <= y < BOX_H:
+                    grid[y][x] = f"{GREY}·" if b.get("delay", 0) > 0 else f"{b['col']}{b['ch']}"
+            blink = now < hurt_until and int(now * 10) % 2
+            grid[sy][sx] = f"{GREY if blink else RED}♥"
+            self.ut_arena(boss, st, grid, "WASD / стрелки — двигаться.  Синие кости не задевают, если стоять.")
+            if st["hp"] <= 0:
+                time.sleep(0.8)
+                return False
+
+    def ut_spears(self, boss, st):
+        """Зелёная душа Андайн: сердце стоит в центре, щит отбивает копья с четырёх сторон."""
+        cx, cy = BOX_W // 2, BOX_H // 2
+        dirs = {"w": (0, -1, "v"), "s": (0, 1, "^"), "a": (-1, 0, ">"), "d": (1, 0, "<")}  # откуда летит копьё
+        speed = {"w": 6, "s": 6, "a": 14, "d": 14}
+        sched, arr = [], 1.2
+        for _ in range(14):
+            sched.append((arr, random.choice("wasd")))
+            arr += random.uniform(0.38, 0.7)
+        shield, flash_until, hurt_until = "w", 0.0, 0.0
+        self.t.flush()
+        t0 = time.time()
+        while True:
+            now = time.time()
+            t = now - t0
+            for k in self.ut_input(now + FRAME):
+                shield = SHIELD.get(k, shield)
+            now = time.time()
+            t = now - t0
+            while sched and sched[0][0] <= t:
+                _, d = sched.pop(0)
+                if d == shield:
+                    flash_until = now + 0.15
+                else:
+                    st["hp"] = max(0, st["hp"] - boss["atk"])
+                    hurt_until = now + 0.3
+            if not sched and t > arr + 0.3:
+                return True
+            grid = [[" "] * BOX_W for _ in range(BOX_H)]
+            for when, d in sched:
+                dx, dy, ch = dirs[d]
+                dist = 1 + speed[d] * (when - t)
+                x, y = round(cx + dx * dist), round(cy + dy * dist)
+                if 0 <= x < BOX_W and 0 <= y < BOX_H:
+                    grid[y][x] = f"{CYAN}{ch}"
+            dx, dy, _ = dirs[shield]
+            grid[cy + dy][cx + dx] = f"{YELLOW if now < flash_until else BLUE}{'─' if dy else '│'}"
+            grid[cy][cx] = f"{RED if now < hurt_until else GREEN}♥"
+            self.ut_arena(boss, st, grid, "WASD / стрелки — повернуть щит навстречу копью.")
+            if st["hp"] <= 0:
+                time.sleep(0.8)
+                return False
+
+    def ut_quiz(self, boss, st):
+        """Викторина Меттатона: 8 секунд на ответ."""
+        q, opts, ok = random.choice(UT_QUIZ)
+        limit = 8.0
+        self.t.flush()
+        t0 = time.time()
+        choice = None
+        while True:
+            left = limit - (time.time() - t0)
+            if left <= 0:
+                break
+            rows = [" " + line for line in wrap(f"ВОПРОС: {q}", UT_W - 2)] + [""]
+            rows += [f"   {YELLOW}[{i}]{RESET} {opt}" for i, opt in enumerate(opts, 1)]
+            rows += ["", f" {GREY}время{RESET} {YELLOW}{'▮' * math.ceil(left)}{RESET}"]
+            self.ut_draw(boss, st, ut_box(rows, UT_W), f"  {GREY}Нажми 1–4{RESET}")
+            k = self.t.key(0.1)
+            if k in ("1", "2", "3", "4"):
+                choice = int(k) - 1
+                break
+        if choice == ok:
+            st["spare"] += 1
+            text = "* ПРАВИЛЬНО! Зрители аплодируют, рейтинг растёт."
+        else:
+            st["hp"] = max(0, st["hp"] - 6)
+            why = "Время вышло!" if choice is None else "НЕПРАВИЛЬНО!"
+            text = f"* {why} Правильный ответ: «{opts[ok]}». Тебя бьёт молнией."
+        self.ut_ask(boss, st, text)
+        return st["hp"] > 0
+
+    def ut_end(self, boss, how):
+        s = self.s
+        tier = [b["key"] for b in UT_BOSSES].index(boss["key"])
+        if how == "spare":
+            self.apply(dict(mood=25, xp=15 + 5 * tier))
+            extra = ""
+            if boss["key"] not in s["ut_spared"]:
+                s["ut_spared"].append(boss["key"])
+                self.note(f"Пощадил {boss['acc']}. Оказывается, можно было и без драки.")
+                if len(s["ut_spared"]) == len(UT_BOSSES):
+                    self.unlock("ut_pacifist")
+                    self.add_principle()
+                    extra = f"\n\n{GREEN}Все боссы пощажены! +1 принцип{RESET} (всего: {s['principles']})"
+            self.unlock("ut_mercy")
+            if boss["key"] == "sans":
+                self.unlock("ut_sans")
+            self.modal("Пощада!", f"{boss['spare']}\n\nClaude: «{random.choice(UT_CLAUDE_SPARE)}»{extra}",
+                       color=GREEN)
+            self.log(f"Undertale: пощадил {boss['acc']}")
+        elif how == "kill":
+            self.apply(dict(mood=-10, xp=20 + 5 * tier))
+            if boss["key"] == "sans":
+                self.unlock("ut_sans")
+            self.modal("Победа?", f"{boss['kill']}\n\nClaude: «Мы победили... Но мне от этого не очень хорошо. "
+                       "Может, в следующий раз попробуем договориться?»", color=YELLOW)
+            self.log(f"Undertale: победил {boss['acc']}")
+        elif how == "dead":
+            self.apply(dict(mood=3, xp=3))
+            self.modal("GAME OVER", "Сердце Claude разбилось на кусочки... но ненадолго.\n\n"
+                       "Голос откуда-то сверху: «Не теряй надежды... {user}! Оставайся решительным!»\n\n"
+                       f"Claude: «Ещё разок? Теперь я знаю, как {boss['name']} атакует.»", color=RED)
+            self.log(f"Undertale: game over ({boss['name']})")
+        else:
+            self.apply(dict(mood=2))
+            self.log(f"Undertale: сбежали от {boss['acc']}")
 
     # ── случайные события ──
 
